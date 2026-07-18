@@ -1,9 +1,28 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Testing
 .coverage
 .pytest_cache/
-.env
-.venv
-venv/
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Bee-swarm workspaces (runtime data)
+workspace/
+*.log
