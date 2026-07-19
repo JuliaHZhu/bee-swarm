@@ -136,32 +136,52 @@ class BeeMemory:
         return self.store.read_memory()
 
     # ------------------------------------------------------------------
+    # System prompt builder (inject memory into LLM context)
+    # ------------------------------------------------------------------
+
+    def build_system_prompt(self, task_id: str | None = None) -> str:
+        """拼接 SOUL + 长期记忆 + 当前任务上下文，作为 LLM system prompt。
+
+        task_id 为 None 时只包含 SOUL + 长期记忆（适用于无具体任务的场景）。
+        """
+        parts: list[str] = []
+
+        soul = self.read_soul()
+        if soul.strip():
+            parts.append(f"=== YOUR IDENTITY (SOUL) ===\n{soul.strip()}")
+
+        long_term = self.get_long_term_memory()
+        if long_term.strip():
+            parts.append(f"=== LONG-TERM MEMORY ===\n{long_term.strip()}")
+
+        if task_id:
+            task_ctx = self.get_task_context(task_id, max_entries=30)
+            if task_ctx.strip():
+                parts.append(f"=== CURRENT TASK CONTEXT ===\n{task_ctx.strip()}")
+
+        return "\n\n".join(parts)
+
+    # ------------------------------------------------------------------
     # Dream (periodic consolidation)
     # ------------------------------------------------------------------
 
-    def dream(self) -> bool:
+    def dream(self) -> tuple[str, int] | None:
         """Trigger nanobot Dream consolidation if there is unprocessed history.
 
-        Returns True if consolidation was performed, False if nothing to do.
+        Returns the Dream prompt and last cursor *without* advancing state,
+        so that an external LLM provider can perform the consolidation.
+        The caller is responsible for calling set_last_dream_cursor() after
+        successful consolidation.
         """
         dream_prompt = self.store.build_dream_prompt(max_entries=50)
         if dream_prompt is None:
-            return False
+            return None
+        return dream_prompt
 
-        prompt, last_cursor = dream_prompt
-        # For now we only *prepare* the prompt; actual LLM-driven consolidation
-        # can be plugged in later.  We still advance the cursor so the same
-        # batch is not re-processed.
-        self.store.set_last_dream_cursor(last_cursor)
-        self.git.auto_commit(f"dream: consolidate up to cursor {last_cursor}")
-        return True
-
-    def dream_prompt(self) -> tuple[str, int] | None:
-        """Return the Dream prompt and cursor *without* advancing state.
-
-        Useful when an external LLM provider will perform the consolidation.
-        """
-        return self.store.build_dream_prompt(max_entries=50)
+    def advance_dream_cursor(self, cursor: int) -> None:
+        """Advance the dream cursor after successful external consolidation."""
+        self.store.set_last_dream_cursor(cursor)
+        self.git.auto_commit(f"dream: consolidate up to cursor {cursor}")
 
     # ------------------------------------------------------------------
     # Git utilities

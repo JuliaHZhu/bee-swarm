@@ -154,7 +154,9 @@ Acceptance Criteria: {chr(10).join('- ' + c for c in card.acceptance_criteria) i
 Write all output files to the artifacts directory using the write_file tool.
 Use the task ID '{card.task_id}' as a subdirectory when writing files.
 """
-        result = await self.agent_loop.run(task_description)
+        # 注入 memory 上下文到 system prompt
+        system_prompt = WORKER_SYSTEM_PROMPT + "\n\n" + self.memory.build_system_prompt(card.task_id)
+        result = await self.agent_loop.run(task_description, system_prompt=system_prompt)
 
         # 记录 LLM 交互
         if result.messages:
@@ -177,19 +179,30 @@ Use the task ID '{card.task_id}' as a subdirectory when writing files.
         self.memory.record_task_end(card.task_id, success=True, result=result.final_content)
         return result.final_content or "Task completed.", artifact_paths
 
-    async def run_loop(self, poll_interval: float = 2.0, max_tasks: int = 0) -> None:
+    async def run_loop(self, poll_interval: float = 2.0, max_tasks: int = 0,
+                       reclaim_interval: float = 60.0) -> None:
         """持续运行，轮询任务池。
 
         Args:
             poll_interval: 轮询间隔（秒）
             max_tasks: 最多执行多少个任务，0 表示无限
+            reclaim_interval: stale claim 回收间隔（秒）
         """
         executed = 0
+        last_reclaim = 0.0
         print(f"[{self.bee_name}] Starting worker loop (poll_interval={poll_interval}s)")
 
         while True:
             if max_tasks > 0 and executed >= max_tasks:
                 break
+
+            # 定期回收超时任务
+            now = asyncio.get_event_loop().time()
+            if now - last_reclaim >= reclaim_interval:
+                reclaimed = self.task_store.reclaim_stale(timeout_seconds=300.0)
+                if reclaimed:
+                    print(f"[{self.bee_name}] Reclaimed stale tasks: {reclaimed}")
+                last_reclaim = now
 
             did_work = await self.run_once()
             if did_work:

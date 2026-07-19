@@ -260,7 +260,8 @@ Example:
 
 Respond with ONLY the JSON array, no other text.
 """
-        result = await self.agent_loop.run(prompt)
+        system_prompt = CENTURION_SYSTEM_PROMPT + "\n\n" + self.memory.build_system_prompt(card.task_id)
+        result = await self.agent_loop.run(prompt, system_prompt=system_prompt)
 
         # 尝试从 LLM 回复中解析 JSON
         content = result.final_content or ""

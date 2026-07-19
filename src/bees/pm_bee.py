@@ -138,7 +138,8 @@ Return a JSON object with:
 
 Respond with ONLY the JSON object, no other text.
 """
-        result = await self.agent_loop.run(prompt)
+        system_prompt = PM_SYSTEM_PROMPT + "\n\n" + self.memory.build_system_prompt("pm_planning")
+        result = await self.agent_loop.run(prompt, system_prompt=system_prompt)
         content = result.final_content or ""
 
         import json

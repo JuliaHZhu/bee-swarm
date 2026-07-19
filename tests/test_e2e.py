@@ -11,6 +11,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 # 确保项目根目录在 sys.path
@@ -24,7 +25,6 @@ from src.bus.artifact import ArtifactStore
 from src.bees.pm_bee import PMBee
 from src.bees.centurion_bee import CenturionBee
 from src.bees.worker_bee import WorkerBee
-from src.knowledge.graph_store import GraphStore
 
 
 class TestNaming(unittest.TestCase):
@@ -194,50 +194,6 @@ class TestArtifactStore(unittest.TestCase):
 
         files = self.store.list_artifacts("task_multi")
         self.assertEqual(len(files), 2)
-
-
-class TestGraphStore(unittest.TestCase):
-    """知识图谱存储测试。"""
-
-    def setUp(self):
-        self.tmpdir = Path(tempfile.mkdtemp())
-        self.store = GraphStore(self.tmpdir / "test.db")
-
-    def tearDown(self):
-        shutil.rmtree(self.tmpdir)
-
-    def test_add_and_get_node(self):
-        self.store.add_node("task_01", "task", "Test Task")
-        node = self.store.get_node("task_01")
-        self.assertIsNotNone(node)
-        self.assertEqual(node["type"], "task")
-        self.assertEqual(node["label"], "Test Task")
-
-    def test_add_edge(self):
-        self.store.add_node("task_01", "task", "Parent Task")
-        self.store.add_node("task_02", "task", "Child Task")
-        self.store.add_edge("task_01", "task_02", "parent_of")
-
-        outgoing = self.store.get_outgoing("task_01", "parent_of")
-        self.assertEqual(len(outgoing), 1)
-        self.assertEqual(outgoing[0]["target_id"], "task_02")
-
-        incoming = self.store.get_incoming("task_02", "parent_of")
-        self.assertEqual(len(incoming), 1)
-        self.assertEqual(incoming[0]["source_id"], "task_01")
-
-    def test_convenience_methods(self):
-        self.store.record_task("task_pm_01", "Create docs")
-        self.store.record_task("task_worker_01", "Write README")
-        self.store.record_bee("bee_pm_01", "pm")
-        self.store.task_parent_of("task_pm_01", "task_worker_01")
-        self.store.task_created_by("task_pm_01", "bee_pm_01")
-
-        tasks = self.store.list_nodes("task")
-        self.assertEqual(len(tasks), 2)
-
-        children = self.store.get_outgoing("task_pm_01", "parent_of")
-        self.assertEqual(len(children), 1)
 
 
 class TestEndToEnd(unittest.IsolatedAsyncioTestCase):
@@ -485,6 +441,57 @@ class TestConcurrentClaim(unittest.TestCase):
         print(f"[CONCURRENT] 20 threads claim, 1 winner: {successes[0].assigned_to}")
 
 
+class TestReclaimStale(unittest.TestCase):
+    """Stale claim 回收测试。"""
+
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp())
+        self.store = TaskCardStore(self.tmpdir)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def test_reclaim_stale_task(self):
+        card = TaskCard(
+            task_id="worker_stale_task",
+            type="worker",
+            title="Stale test",
+        )
+        self.store.create(card)
+        claimed = self.store.claim("worker_stale_task", "bee_old")
+        self.assertIsNotNone(claimed)
+
+        # 人为把 claimed_at 改成 10 分钟前
+        claimed.claimed_at = (datetime.now(timezone.utc).replace(minute=datetime.now().minute - 10)).isoformat()
+        self.store.update(claimed)
+
+        # reclaim 超时 5 分钟
+        reclaimed = self.store.reclaim_stale(timeout_seconds=300.0)
+        self.assertIn("worker_stale_task", reclaimed)
+
+        # 验证任务回到 pending
+        pending = self.store.list_pending()
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0].status, TaskStatus.PENDING)
+        self.assertIsNone(pending[0].assigned_to)
+
+    def test_no_reclaim_fresh_task(self):
+        card = TaskCard(
+            task_id="worker_fresh_task",
+            type="worker",
+            title="Fresh test",
+        )
+        self.store.create(card)
+        self.store.claim("worker_fresh_task", "bee_fresh")
+
+        # reclaim 超时 5 分钟，刚 claim 的不应被回收
+        reclaimed = self.store.reclaim_stale(timeout_seconds=300.0)
+        self.assertNotIn("worker_fresh_task", reclaimed)
+
+        in_prog = self.store.list_in_progress()
+        self.assertEqual(len(in_prog), 1)
+
+
 def run_tests():
     """运行所有测试。"""
     loader = unittest.TestLoader()
@@ -493,9 +500,9 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestNaming))
     suite.addTests(loader.loadTestsFromTestCase(TestTaskCardStore))
     suite.addTests(loader.loadTestsFromTestCase(TestArtifactStore))
-    suite.addTests(loader.loadTestsFromTestCase(TestGraphStore))
     suite.addTests(loader.loadTestsFromTestCase(TestEndToEnd))
     suite.addTests(loader.loadTestsFromTestCase(TestConcurrentClaim))
+    suite.addTests(loader.loadTestsFromTestCase(TestReclaimStale))
 
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)

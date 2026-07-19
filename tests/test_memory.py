@@ -91,25 +91,24 @@ class TestTaskHistory:
 
 class TestDream:
     def test_dream_nothing_to_do(self, bee_memory: BeeMemory) -> None:
-        # No history → dream should return False
-        assert bee_memory.dream() is False
-
-    def test_dream_prompt_returns_none_when_empty(self, bee_memory: BeeMemory) -> None:
-        assert bee_memory.dream_prompt() is None
+        # No history → dream should return None
+        assert bee_memory.dream() is None
 
     def test_dream_after_history(self, bee_memory: BeeMemory) -> None:
         # Add enough history to trigger dream
         for i in range(5):
             bee_memory.record_turn("user", f"Message {i}", "task_dream")
 
-        # build_dream_prompt should return something because there is unprocessed history
-        prompt = bee_memory.dream_prompt()
-        # It may or may not return a prompt depending on nanobot's internal threshold
-        # We just assert it doesn't crash
+        # dream should return prompt+cursor without advancing state
+        prompt = bee_memory.dream()
         if prompt is not None:
             p, cursor = prompt
             assert isinstance(cursor, int)
             assert cursor >= 0
+            # Cursor should NOT be advanced yet
+            prompt2 = bee_memory.dream()
+            assert prompt2 is not None
+            assert prompt2[1] == cursor  # same cursor
 
 
 class TestGitIntegration:

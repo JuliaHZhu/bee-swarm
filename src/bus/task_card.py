@@ -43,6 +43,7 @@ class TaskCard:
     updated_at: str = field(default_factory=_now_iso)
     created_by: str = "system"
     assigned_to: str | None = None
+    claimed_at: str | None = None
     acceptance_criteria: list[str] = field(default_factory=list)
 
     # Worker 任务专用
@@ -84,6 +85,7 @@ class TaskCard:
             updated_at=data.get("updated_at", _now_iso()),
             created_by=data.get("created_by", "system"),
             assigned_to=data.get("assigned_to"),
+            claimed_at=data.get("claimed_at"),
             acceptance_criteria=data.get("acceptance_criteria", []),
             tool=data.get("tool"),
             tool_params=data.get("tool_params", {}),
@@ -161,6 +163,7 @@ class TaskCardStore:
         card.status = TaskStatus.CLAIMED
         card.assigned_to = bee_name
         card.updated_at = _now_iso()
+        card.claimed_at = _now_iso()
 
         # 3) 原子写入最终文件
         final_path = self.workspace / "in_progress" / card.filename
@@ -267,6 +270,39 @@ class TaskCardStore:
                 except Exception:
                     continue
         return results
+
+    def reclaim_stale(self, timeout_seconds: float = 300.0) -> list[str]:
+        """回收超时未完成的 claimed 任务，重新放回 task_pool。
+
+        Returns:
+            被回收的任务 ID 列表。
+        """
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        reclaimed: list[str] = []
+
+        for f in list_task_files(self.workspace, prefix=None, status=TaskStatus.CLAIMED):
+            try:
+                card = self._read(f)
+            except Exception:
+                continue
+            if not card.claimed_at:
+                continue
+            try:
+                claimed_dt = datetime.fromisoformat(card.claimed_at)
+                if (now - claimed_dt).total_seconds() > timeout_seconds:
+                    # 移回 task_pool
+                    card.status = TaskStatus.PENDING
+                    card.assigned_to = None
+                    card.claimed_at = None
+                    card.updated_at = _now_iso()
+                    target = self.workspace / "task_pool" / card.filename
+                    self._write(target, card)
+                    f.unlink(missing_ok=True)
+                    reclaimed.append(card.task_id)
+            except (ValueError, TypeError):
+                continue
+        return reclaimed
 
     # ---- 内部方法 ----
 
