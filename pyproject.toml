@@ -26,6 +26,7 @@ dev = [
 worker-bee = "src.bees.worker_bee:main"
 centurion-bee = "src.bees.centurion_bee:main"
 pm-bee = "src.bees.pm_bee:main"
+swarm-supervisor = "src.factory.supervisor:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
