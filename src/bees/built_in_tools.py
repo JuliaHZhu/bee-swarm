@@ -22,15 +22,24 @@ class _BaseFileTool(Tool):
     def __init__(self, workspace: Path) -> None:
         self._workspace = Path(workspace).resolve()
 
-    def _resolve_path(self, path: str) -> Path:
-        """解析路径，限制在工作区内。"""
+    def _resolve_path(self, path: str) -> Path | None:
+        """解析路径，限制在工作区内。
+
+        拒绝含 '..' 的相对路径和绝对路径。
+        返回 None 表示路径非法。
+        """
+        # 拒绝绝对路径
+        if os.path.isabs(path):
+            return None
+        # 拒绝含 '..' 的路径
+        if ".." in Path(path).parts:
+            return None
         target = (self._workspace / path).resolve()
-        # 确保在工作区内（简单的安全检查）
+        # 双向检查：resolve() 跟随 symlink 后必须仍在 workspace 内
         try:
             target.relative_to(self._workspace)
         except ValueError:
-            # 如果路径跳出工作区，强制回到工作区根
-            target = self._workspace / Path(path).name
+            return None
         return target
 
 
@@ -58,6 +67,8 @@ class ReadFileTool(_BaseFileTool):
 
     async def execute(self, path: str, max_lines: int | None = None, **kwargs: Any) -> str:
         target = self._resolve_path(path)
+        if target is None:
+            return ToolResult.error(f"Error: Invalid path: {path}")
         if not target.exists():
             return ToolResult.error(f"Error: File not found: {path}")
         if not target.is_file():
@@ -107,6 +118,8 @@ class WriteFileTool(_BaseFileTool):
 
     async def execute(self, path: str, content: str, append: bool = False, **kwargs: Any) -> str:
         target = self._resolve_path(path)
+        if target is None:
+            return ToolResult.error(f"Error: Invalid path: {path}")
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             mode = "a" if append else "w"
@@ -141,6 +154,8 @@ class ListDirTool(_BaseFileTool):
 
     async def execute(self, path: str = ".", recursive: bool = False, **kwargs: Any) -> str:
         target = self._resolve_path(path)
+        if target is None:
+            return ToolResult.error(f"Error: Invalid path: {path}")
         if not target.exists():
             return ToolResult.error(f"Error: Directory not found: {path}")
         if not target.is_dir():
@@ -202,6 +217,8 @@ class SearchTextTool(_BaseFileTool):
         **kwargs: Any,
     ) -> str:
         target = self._resolve_path(path)
+        if target is None:
+            return ToolResult.error(f"Error: Invalid path: {path}")
         if not target.exists():
             return ToolResult.error(f"Error: Path not found: {path}")
 

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -124,36 +125,58 @@ class TaskCardStore:
     def claim(self, task_id: str, bee_name: str) -> TaskCard | None:
         """领取任务：原子地将 pending 任务移入 in_progress 并标记 claimed。
 
-        使用 rename（同分区原子）实现并发安全。
-        返回领取后的 TaskCard，失败返回 None。
+        使用 os.rename 实现同分区原子移动；失败返回 None。
         """
         pending_path = self.workspace / "task_pool" / build_filename(task_id, TaskStatus.PENDING)
         if not pending_path.exists():
             return None
 
-        card = self._read(pending_path)
+        # 1) 原子 rename 到 in_progress 下的临时路径（保留原始内容）
+        temp_claimed_path = self.workspace / "in_progress" / f"{task_id}_claimed_tmp.json"
+        try:
+            os.rename(str(pending_path), str(temp_claimed_path))
+        except OSError:
+            # 已被其他进程领走
+            return None
+
+        # 2) 读取并更新状态
+        try:
+            card = self._read(temp_claimed_path)
+        except Exception:
+            # 读失败时回滚：rename 回 task_pool
+            try:
+                os.rename(str(temp_claimed_path), str(pending_path))
+            except OSError:
+                pass
+            return None
+
         if card.status != TaskStatus.PENDING:
+            # 已被处理，rename 回 task_pool（安全起见）
+            try:
+                os.rename(str(temp_claimed_path), str(pending_path))
+            except OSError:
+                pass
             return None
 
         card.status = TaskStatus.CLAIMED
         card.assigned_to = bee_name
         card.updated_at = _now_iso()
 
-        target_path = self.workspace / "in_progress" / card.filename
+        # 3) 原子写入最终文件
+        final_path = self.workspace / "in_progress" / card.filename
         try:
-            # 先写目标文件，再删除源文件（模拟原子移动）
-            # 真正的原子移动用 os.rename，但需要确保在同一文件系统
-            self._write(target_path, card)
-            pending_path.unlink()
+            self._write(final_path, card)
+            # 删掉临时文件
+            temp_claimed_path.unlink(missing_ok=True)
             return card
         except Exception:
-            # 并发冲突：目标可能已存在，或源已被删
-            if target_path.exists():
-                # 回滚：我们写的目标文件，删掉
-                try:
-                    target_path.unlink()
-                except Exception:
-                    pass
+            # 回滚：rename 回 task_pool
+            try:
+                if final_path.exists():
+                    final_path.unlink(missing_ok=True)
+                os.rename(str(temp_claimed_path), str(pending_path))
+            except OSError:
+                pass
             return None
 
     def update(self, card: TaskCard) -> Path:
@@ -165,34 +188,26 @@ class TaskCardStore:
 
     def complete(self, card: TaskCard, result: str | None = None,
                  failed: bool = False, error: str | None = None) -> Path:
-        """完成任务：移入 done/ 目录，标记 done 或 failed。"""
+        """完成任务：原子移入 done/ 目录，标记 done 或 failed。"""
         card.status = TaskStatus.FAILED if failed else TaskStatus.DONE
         card.result = result
         card.error = error
         card.updated_at = _now_iso()
 
-        # 从 in_progress 移到 done
-        source_dir = self.workspace / "in_progress"
-        source_path = source_dir / build_filename(card.task_id, TaskStatus.CLAIMED)
         target_path = self.workspace / "done" / card.filename
-
-        # 写入目标
         self._write(target_path, card)
 
-        # 尝试删除源文件（可能不存在，比如直接从 pending complete）
-        if source_path.exists():
-            try:
-                source_path.unlink()
-            except Exception:
-                pass
-
-        # 也检查 task_pool 中是否有旧文件
-        pool_path = self.workspace / "task_pool" / build_filename(card.task_id, TaskStatus.PENDING)
-        if pool_path.exists():
-            try:
-                pool_path.unlink()
-            except Exception:
-                pass
+        # 清理源文件（in_progress 或 task_pool）
+        for src_dir, src_status in (
+            ("in_progress", TaskStatus.CLAIMED),
+            ("task_pool", TaskStatus.PENDING),
+        ):
+            src_path = self.workspace / src_dir / build_filename(card.task_id, src_status)
+            if src_path.exists():
+                try:
+                    src_path.unlink()
+                except Exception:
+                    pass
 
         return target_path
 
@@ -266,8 +281,12 @@ class TaskCardStore:
 
     def _write(self, path: Path, card: TaskCard) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(card.to_dict(), f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(str(tmp_path), str(path))
 
 
 def new_task_id(prefix: str, *parts: str) -> str:

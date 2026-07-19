@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -25,19 +26,23 @@ class ArtifactStore:
         return d
 
     def write_file(self, task_id: str, filename: str, content: str) -> Path:
-        """写入一个文本产出物。"""
+        """写入一个文本产出物（原子写）。"""
         path = self.task_dir(task_id) / filename
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(content)
+        os.replace(str(tmp_path), str(path))
         return path
 
     def write_json(self, task_id: str, filename: str, data: Any) -> Path:
-        """写入一个 JSON 产出物。"""
+        """写入一个 JSON 产出物（原子写）。"""
         path = self.task_dir(task_id) / filename
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(str(tmp_path), str(path))
         return path
 
     def read_file(self, task_id: str, filename: str) -> str | None:
