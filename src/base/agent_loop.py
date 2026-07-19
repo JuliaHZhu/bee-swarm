@@ -21,7 +21,7 @@ from .tool_calling import ToolRegistry, ToolResult
 class AgentLoopConfig:
     """Agent 循环配置。"""
     max_iterations: int = 10
-    temperature: float = 0.7
+    temperature: float = 1.0
     system_prompt: str = "You are a helpful assistant."
     model: str | None = None
 

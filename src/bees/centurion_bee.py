@@ -246,10 +246,12 @@ Acceptance Criteria:
 {chr(10).join('- ' + c for c in card.acceptance_criteria) if card.acceptance_criteria else '- None'}
 
 Available tools for workers:
-- read_file(path, max_lines): Read a file
-- write_file(path, content, append): Write content to a file
-- list_dir(path, recursive): List directory contents
-- search_text(pattern, path, max_results): Search for text in files
+- read_file(path, max_lines): Read a file (path must be relative to workspace)
+- write_file(path, content, append): Write content to a file (path must be relative to workspace)
+- list_dir(path, recursive): List directory contents (path must be relative to workspace)
+- search_text(pattern, path, max_results): Search for text in files (path must be relative to workspace)
+
+IMPORTANT: All paths in tool_params must be relative to the workspace root. Never use absolute paths.
 
 |Return a JSON array of subtasks. Each subtask must have:
 |- "title": short title

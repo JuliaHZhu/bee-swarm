@@ -41,7 +41,7 @@ class LLMProvider(ABC):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float = 1.0,
         max_tokens: int | None = None,
     ) -> LLMResponse:
         """发起聊天补全请求。"""
@@ -76,7 +76,7 @@ class MockLLMProvider(LLMProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float = 1.0,
         max_tokens: int | None = None,
     ) -> LLMResponse:
         self.call_history.append({
@@ -143,7 +143,7 @@ class OpenAICompatProvider(LLMProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         model: str | None = None,
-        temperature: float = 0.7,
+        temperature: float = 1.0,
         max_tokens: int | None = None,
     ) -> LLMResponse:
         # ponytail: 使用 aiohttp 异步请求，不引入额外依赖

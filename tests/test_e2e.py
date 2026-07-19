@@ -462,7 +462,8 @@ class TestReclaimStale(unittest.TestCase):
         self.assertIsNotNone(claimed)
 
         # 人为把 claimed_at 改成 10 分钟前
-        claimed.claimed_at = (datetime.now(timezone.utc).replace(minute=datetime.now().minute - 10)).isoformat()
+        from datetime import timedelta
+        claimed.claimed_at = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
         self.store.update(claimed)
 
         # reclaim 超时 5 分钟

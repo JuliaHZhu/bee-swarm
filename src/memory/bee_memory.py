@@ -49,7 +49,6 @@ class BeeMemory:
             self.store.write_soul(
                 f"# {self.bee_name}\n\n"
                 f"Role: Bee in the swarm.\n"
-                f"Workspace: {self.memory_workspace}\n"
             )
             self.git.auto_commit(f"init: {self.bee_name} soul")
 

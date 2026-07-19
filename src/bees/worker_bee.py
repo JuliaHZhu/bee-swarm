@@ -41,6 +41,7 @@ Rules:
 3. After completing the task, report what you did and the result
 4. If you encounter an error, report it clearly
 5. Be concise and direct in your final response
+6. IMPORTANT: All file paths passed to tools must be relative to the workspace. Never use absolute paths.
 """
 
 

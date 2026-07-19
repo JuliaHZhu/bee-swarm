@@ -271,6 +271,23 @@ class TaskCardStore:
                     continue
         return results
 
+    def list_all(self) -> list[str]:
+        """返回所有任务 ID（搜索全部状态目录）。"""
+        ids: set[str] = set()
+        for status_dir_name in ["task_pool", "in_progress", "done"]:
+            d = self.workspace / status_dir_name
+            if not d.is_dir():
+                continue
+            for f in d.iterdir():
+                if not f.is_file() or f.suffix != ".json":
+                    continue
+                try:
+                    card = self._read(f)
+                    ids.add(card.task_id)
+                except Exception:
+                    continue
+        return sorted(ids)
+
     def reclaim_stale(self, timeout_seconds: float = 300.0) -> list[str]:
         """回收超时未完成的 claimed 任务，重新放回 task_pool。
 
