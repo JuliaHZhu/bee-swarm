@@ -53,11 +53,13 @@ class CenturionBee:
         provider: LLMProvider | None = None,
         bee_name: str = "centurion_01",
         max_iterations: int = 8,
+        spawner: Any | None = None,
     ) -> None:
         self.workspace = Path(workspace)
         self.bee_name = bee_name
         self.provider = provider or MockLLMProvider()
         self.max_iterations = max_iterations
+        self.spawner = spawner
         # 存储层
         self.task_store = TaskCardStore(self.workspace)
         self.artifact_store = ArtifactStore(self.workspace)
@@ -117,6 +119,7 @@ class CenturionBee:
             # 4. 创建子任务卡片
             for i, subtask_info in enumerate(subtasks):
                 sub_id = new_task_id("worker", card.task_id, f"{i+1:02d}")
+                agent_name = subtask_info.get("agent", "default-worker")
                 sub_card = TaskCard(
                     task_id=sub_id,
                     type="worker",
@@ -128,9 +131,17 @@ class CenturionBee:
                     tool_params=subtask_info.get("tool_params", {}),
                     acceptance_criteria=subtask_info.get("acceptance_criteria", []),
                     priority=card.priority,
+                    metadata={"agent": agent_name},
                 )
                 self.task_store.create(sub_card)
                 card.subtasks.append(sub_id)
+
+                # 如果有 spawner，启动对应 agent 的 worker 进程
+                if self.spawner:
+                    try:
+                        self.spawner.spawn(agent_name, sub_card.task_id)
+                    except Exception as e:
+                        print(f"[{self.bee_name}] Spawner failed for {sub_id}: {e}")
 
             # 5. 更新父任务（保持 in_progress，等待子任务完成）
             self.task_store.update(card)
@@ -198,6 +209,7 @@ class CenturionBee:
                                f"## Components\n\nTBD\n",
                 },
                 "acceptance_criteria": ["architecture.md created"],
+                "agent": "default-worker",
             })
 
         return subtasks
@@ -217,6 +229,7 @@ class CenturionBee:
                     "max_results": 20,
                 },
                 "acceptance_criteria": ["Search results obtained"],
+                "agent": "literature-reviewer",
             },
             {
                 "title": f"Summarize findings for {card.title}",
@@ -227,6 +240,7 @@ class CenturionBee:
                     "content": f"# Research Summary: {card.title}\n\nBased on search results.\n\nTBD\n",
                 },
                 "acceptance_criteria": ["Summary document created"],
+                "agent": "default-worker",
             },
         ]
 
@@ -246,16 +260,17 @@ Available tools for workers:
 - list_dir(path, recursive): List directory contents
 - search_text(pattern, path, max_results): Search for text in files
 
-Return a JSON array of subtasks. Each subtask must have:
-- "title": short title
-- "description": detailed description
-- "tool": tool name (read_file/write_file/list_dir/search_text) or null if multi-step
-- "tool_params": object with tool parameters
-- "acceptance_criteria": array of strings
+|Return a JSON array of subtasks. Each subtask must have:
+|- "title": short title
+|- "description": detailed description
+|- "tool": tool name (read_file/write_file/list_dir/search_text) or null if multi-step
+|- "tool_params": object with tool parameters
+|- "acceptance_criteria": array of strings
+|- "agent": agent name (default-worker / literature-reviewer / code-executor) — pick the best fit
 
 Example:
 [
-  {{"title": "Read config", "description": "Read the config file", "tool": "read_file", "tool_params": {{"path": "config.json"}}, "acceptance_criteria": ["Config file read"]}}
+  {{"title": "Read config", "description": "Read the config file", "tool": "read_file", "tool_params": {{"path": "config.json"}}, "acceptance_criteria": ["Config file read"], "agent": "default-worker"}}
 ]
 
 Respond with ONLY the JSON array, no other text.
@@ -284,6 +299,7 @@ Respond with ONLY the JSON array, no other text.
                                 "tool": st.get("tool"),
                                 "tool_params": st.get("tool_params", {}),
                                 "acceptance_criteria": st.get("acceptance_criteria", []),
+                                "agent": st.get("agent", "default-worker"),
                             })
                     if normalized:
                         return normalized
@@ -396,6 +412,10 @@ def main() -> None:
         "--api-key", type=str, default="",
         help="LLM API key (default: env OPENAI_API_KEY)",
     )
+    parser.add_argument(
+        "--spawn-workers", action="store_true",
+        help="Auto-spawn worker processes for each subtask via AgentSpawner",
+    )
     args = parser.parse_args()
 
     workspace = Path(args.workspace).resolve()
@@ -412,7 +432,13 @@ def main() -> None:
         provider = MockLLMProvider(model=model)
         print(f"[{args.name}] WARNING: No API key. Running with MOCK LLM.")
 
-    bee = CenturionBee(workspace=workspace, bee_name=args.name, provider=provider)
+    spawner = None
+    if args.spawn_workers:
+        from src.factory import AgentSpawner
+        spawner = AgentSpawner(workspace, python_executable=sys.executable)
+        print(f"[{args.name}] AgentSpawner enabled")
+
+    bee = CenturionBee(workspace=workspace, bee_name=args.name, provider=provider, spawner=spawner)
 
     if args.once:
         asyncio.run(bee.run_once())

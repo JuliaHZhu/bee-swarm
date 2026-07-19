@@ -256,9 +256,51 @@ class SearchTextTool(_BaseFileTool):
         return f"Found {count} match(es) for '{pattern}':\n" + "\n".join(results)
 
 
-def register_worker_tools(registry, workspace: Path) -> None:
-    """向工具注册表注册 Worker Bee 的默认工具集。"""
-    registry.register(ReadFileTool(workspace))
-    registry.register(WriteFileTool(workspace))
-    registry.register(ListDirTool(workspace))
-    registry.register(SearchTextTool(workspace))
+def register_worker_tools(registry, workspace: Path, tool_names: list[str] | None = None) -> None:
+    """向工具注册表注册 Worker Bee 的默认工具集。
+
+    Args:
+        registry: ToolRegistry 实例
+        workspace: 工作区路径
+        tool_names: 可选，只注册指定名称的工具。为 None 时注册全部。
+    """
+    tool_map = {
+        "read_file": ReadFileTool,
+        "write_file": WriteFileTool,
+        "list_dir": ListDirTool,
+        "search_text": SearchTextTool,
+    }
+
+    names = tool_names if tool_names is not None else list(tool_map.keys())
+    for name in names:
+        cls = tool_map.get(name)
+        if cls is not None:
+            registry.register(cls(workspace))
+        else:
+            # Phase1: 未实现的工具忽略，打印 warning
+            print(f"[WorkerBee] WARNING: tool '{name}' not implemented, skipped")
+
+
+
+# Tool name -> class mapping for dynamic registration
+_TOOL_MAP: dict[str, type] = {
+    "read_file": ReadFileTool,
+    "write_file": WriteFileTool,
+    "list_dir": ListDirTool,
+    "search_text": SearchTextTool,
+}
+
+
+def register_selected_tools(registry, workspace: Path, tool_names: list[str]) -> list[str]:
+    """Register only the tools listed in ``tool_names``.
+
+    Returns a list of unknown tool names (not found in _TOOL_MAP).
+    """
+    unknown: list[str] = []
+    for name in tool_names:
+        cls = _TOOL_MAP.get(name)
+        if cls:
+            registry.register(cls(workspace))
+        else:
+            unknown.append(name)
+    return unknown

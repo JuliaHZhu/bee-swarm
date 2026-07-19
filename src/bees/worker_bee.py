@@ -22,10 +22,10 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.base.llm_backend import LLMProvider, MockLLMProvider
-from src.base.tool_calling import ToolRegistry
+from src.base.tool_calling import ToolRegistry, ToolResult
 from src.base.agent_loop import SimpleAgentLoop, AgentLoopConfig
-from src.bus.task_card import TaskCard, TaskCardStore
 from src.bus.artifact import ArtifactStore
+from src.bus.task_card import TaskCard, TaskCardStore
 from src.bus.naming import TaskStatus
 from src.memory import BeeMemory
 from .built_in_tools import register_worker_tools
@@ -53,20 +53,41 @@ class WorkerBee:
         provider: LLMProvider | None = None,
         bee_name: str = "worker_01",
         max_iterations: int = 5,
+        agent_name: str | None = None,
     ) -> None:
         self.workspace = Path(workspace)
         self.bee_name = bee_name
         self.provider = provider or MockLLMProvider()
         self.max_iterations = max_iterations
+        self.agent_name = agent_name
 
         # 存储层
         self.task_store = TaskCardStore(self.workspace)
         self.artifact_store = ArtifactStore(self.workspace)
         self.memory = BeeMemory(self.workspace, self.bee_name)
 
-        # 工具注册（工作区为整个 workspace，产出物路径通过 prompt 约束）
+        # 动态加载 agent 配置（如果指定了 --agent）
+        self._agent_def: Any = None
+        self._system_prompt = WORKER_SYSTEM_PROMPT
+        if agent_name:
+            from src.factory import AgentRegistry
+            reg = AgentRegistry(self.workspace)
+            try:
+                self._agent_def = reg.get(agent_name)
+                if self._agent_def:
+                    self._system_prompt = self._agent_def.system_prompt
+                    print(f"[{self.bee_name}] Loaded agent config: {self._agent_def.name} v{self._agent_def.version}")
+                else:
+                    print(f"[{self.bee_name}] WARNING: Agent '{agent_name}' not found, using defaults")
+            except Exception as e:
+                print(f"[{self.bee_name}] WARNING: Failed to load agent '{agent_name}': {e}")
+
+        # 工具注册（如果 agent 配置有 tools 则用白名单）
         self.tools = ToolRegistry()
-        register_worker_tools(self.tools, self.workspace)
+        tool_names = None
+        if self._agent_def and self._agent_def.tools:
+            tool_names = self._agent_def.tools
+        register_worker_tools(self.tools, self.workspace, tool_names=tool_names)
 
         # Agent loop
         self.agent_loop = SimpleAgentLoop(
@@ -74,7 +95,7 @@ class WorkerBee:
             tools=self.tools,
             config=AgentLoopConfig(
                 max_iterations=max_iterations,
-                system_prompt=WORKER_SYSTEM_PROMPT,
+                system_prompt=self._system_prompt,
             ),
         )
 
@@ -126,7 +147,7 @@ class WorkerBee:
             self.memory.record_turn("system", f"Direct tool call: {card.tool}", card.task_id)
             result = await self.tools.execute(card.tool, card.tool_params)
             result_str = str(result)
-            is_error = hasattr(result, "is_error") and result.is_error
+            is_error = isinstance(result, ToolResult) and result.is_error
             self.memory.record_tool_call(card.tool, card.tool_params, result_str, card.task_id)
 
             # 记录产出物
@@ -151,7 +172,7 @@ Title: {card.title}
 Description: {card.description}
 Acceptance Criteria: {chr(10).join('- ' + c for c in card.acceptance_criteria) if card.acceptance_criteria else 'None'}
 
-Write all output files to the artifacts directory using the write_file tool.
+Write all output files to the workspace directory using the write_file tool.
 Use the task ID '{card.task_id}' as a subdirectory when writing files.
 """
         # 注入 memory 上下文到 system prompt
@@ -262,11 +283,18 @@ def main() -> None:
         default="",
         help="LLM API key (default: env OPENAI_API_KEY)",
     )
+    parser.add_argument(
+        "--agent",
+        type=str,
+        default="",
+        help="Agent YAML name to load (default: builtin defaults)",
+    )
     args = parser.parse_args()
 
     workspace = Path(args.workspace).resolve()
+    agent_name = args.agent or None
 
-    # 构造 provider：有 key/model 则用真模型，否则 Mock（并警告）
+    # 构造 provider
     api_key = args.api_key or os.environ.get("OPENAI_API_KEY", "")
     base_url = args.base_url or os.environ.get("OPENAI_BASE_URL", "")
     model = args.model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -280,7 +308,7 @@ def main() -> None:
         print(f"[{args.name}] WARNING: No API key provided. Running with MOCK LLM. "
               f"Set --api-key or OPENAI_API_KEY for real model.")
 
-    bee = WorkerBee(workspace=workspace, bee_name=args.name, provider=provider)
+    bee = WorkerBee(workspace=workspace, bee_name=args.name, provider=provider, agent_name=agent_name)
 
     if args.once:
         asyncio.run(bee.run_once())
