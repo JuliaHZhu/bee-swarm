@@ -3,26 +3,21 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.Python
-*.egg-info/
-dist/
-build/
 
-# Testing
+# Coverage
 .coverage
-.pytest_cache/
+.coverage.*
 htmlcov/
+
+# Environments
+.env
+.venv
+env/
+venv/
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
 
 # OS
 .DS_Store
-Thumbs.db
-
-# Bee-swarm workspaces (runtime data)
-workspace/
-*.log
