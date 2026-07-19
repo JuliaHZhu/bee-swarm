@@ -279,28 +279,3 @@ def register_worker_tools(registry, workspace: Path, tool_names: list[str] | Non
         else:
             # Phase1: 未实现的工具忽略，打印 warning
             print(f"[WorkerBee] WARNING: tool '{name}' not implemented, skipped")
-
-
-
-# Tool name -> class mapping for dynamic registration
-_TOOL_MAP: dict[str, type] = {
-    "read_file": ReadFileTool,
-    "write_file": WriteFileTool,
-    "list_dir": ListDirTool,
-    "search_text": SearchTextTool,
-}
-
-
-def register_selected_tools(registry, workspace: Path, tool_names: list[str]) -> list[str]:
-    """Register only the tools listed in ``tool_names``.
-
-    Returns a list of unknown tool names (not found in _TOOL_MAP).
-    """
-    unknown: list[str] = []
-    for name in tool_names:
-        cls = _TOOL_MAP.get(name)
-        if cls:
-            registry.register(cls(workspace))
-        else:
-            unknown.append(name)
-    return unknown

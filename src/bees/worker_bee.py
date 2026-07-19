@@ -181,7 +181,7 @@ Write all output files to the workspace directory using the write_file tool.
 Use the task ID '{card.task_id}' as a subdirectory when writing files.
 """
         # 注入 memory 上下文到 system prompt
-        system_prompt = WORKER_SYSTEM_PROMPT + "\n\n" + self.memory.build_system_prompt(card.task_id)
+        system_prompt = self._system_prompt + "\n\n" + self.memory.build_system_prompt(card.task_id)
         result = await self.agent_loop.run(task_description, system_prompt=system_prompt)
 
         # 记录 LLM 交互
