@@ -71,7 +71,7 @@ class WorkerBee:
         self._system_prompt = WORKER_SYSTEM_PROMPT
         if agent_name:
             from src.factory import AgentRegistry
-            reg = AgentRegistry(self.workspace)
+            reg = AgentRegistry(workspace_dir=self.workspace)
             try:
                 self._agent_def = reg.get(agent_name)
                 if self._agent_def:
@@ -110,9 +110,14 @@ class WorkerBee:
         if not pending:
             return False
 
-        # 尝试领取第一个任务
+        # 尝试领取第一个匹配的任务
         card = None
         for task in pending:
+            # 按 metadata.agent 过滤：未指定 agent 的任务由 default-worker 处理
+            task_agent = task.metadata.get("agent") if task.metadata else None
+            expected = self.agent_name or "default-worker"
+            if task_agent and task_agent != expected:
+                continue
             claimed = self.task_store.claim(task.task_id, self.bee_name)
             if claimed is not None:
                 card = claimed

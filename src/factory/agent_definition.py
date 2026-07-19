@@ -3,22 +3,19 @@
 Phase1 fields (required):
   name, role, system_prompt, tools, version
 
-No pydantic — dataclass + handwritten validate() per YAGNI.
+Uses pydantic BaseModel for validation and serialization.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel, Field, field_validator
 
 
-@dataclass
-class AgentDefinition:
+class AgentDefinition(BaseModel):
     """A single agent definition loaded from YAML."""
-
-    REQUIRED_FIELDS = ("name", "role", "system_prompt", "tools", "version")
 
     name: str
     role: str
@@ -27,7 +24,25 @@ class AgentDefinition:
     version: str = "1.0.0"
 
     # Phase2+ fields (not validated in Phase1, kept for forward compat)
-    metadata: dict[str, Any] = field(default_factory=dict, repr=False)
+    metadata: dict[str, Any] = Field(default_factory=dict, exclude=True)
+
+    # ------------------------------------------------------------------
+    # Validators
+    # ------------------------------------------------------------------
+
+    @field_validator("name", "role", "system_prompt")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("must be non-empty")
+        return v
+
+    @field_validator("tools")
+    @classmethod
+    def _tools_list(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            raise ValueError("must be a list of strings")
+        return v
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -45,61 +60,35 @@ class AgentDefinition:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AgentDefinition":
         """Load from a plain dict (e.g. parsed YAML)."""
-        name = data.get("name", "")
-        role = data.get("role", "")
-        system_prompt = data.get("system_prompt", "")
-        tools = data.get("tools", [])
-        version = data.get("version", "1.0.0")
-
-        # Validate required fields
-        if not name:
-            raise ValueError("AgentDefinition missing required field: 'name'")
-        if not role:
-            raise ValueError(f"AgentDefinition '{name}' missing required field: 'role'")
-        if not system_prompt:
-            raise ValueError(f"AgentDefinition '{name}' missing required field: 'system_prompt'")
-        if not isinstance(tools, list):
-            raise ValueError(f"AgentDefinition '{name}' field 'tools' must be a list")
-
-        # Strip unknown fields into metadata for forward compat
+        # Pop known fields; leftovers go into metadata
         known = {"name", "role", "system_prompt", "tools", "version"}
-        metadata = {k: v for k, v in data.items() if k not in known}
-
-        return cls(
-            name=name,
-            role=role,
-            system_prompt=system_prompt,
-            tools=list(tools),
-            version=version,
-            metadata=metadata,
-        )
+        kwargs = {k: data.pop(k) for k in list(data.keys()) if k in known}
+        metadata = dict(data)  # whatever remains
+        if metadata:
+            kwargs["metadata"] = metadata
+        return cls(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict (round-trippable)."""
-        return {
-            "name": self.name,
-            "role": self.role,
-            "system_prompt": self.system_prompt,
-            "tools": self.tools,
-            "version": self.version,
-            **self.metadata,
-        }
+        d = self.model_dump(exclude={"metadata"})
+        d.update(self.metadata)
+        return d
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-    def validate(self) -> bool:
+
+    def check(self) -> bool:
         """Phase1 lightweight validation.
 
         Raises ValueError on first problem found.
         Returns True when valid.
         """
-        missing = [f for f in self.REQUIRED_FIELDS if not getattr(self, f, None)]
-        if missing:
-            raise ValueError(f"Missing required fields: {', '.join(missing)}")
+        # Pydantic already validated types on construction; this checks business rules
+        if self.role not in {"worker", "pm", "centurion"}:
+            raise ValueError(f"role '{self.role}' not in supported set (worker/pm/centurion)")
 
-        # tool whitelist check
-        _ALLOWED = {"read_file", "write_file", "list_dir", "search_text", "run_command", "complete_task"}
+        _ALLOWED = {"read_file", "write_file", "list_dir", "search_text"}
         unknown = [t for t in self.tools if t not in _ALLOWED]
         if unknown:
             raise ValueError(f"Unknown tools: {', '.join(unknown)}")
