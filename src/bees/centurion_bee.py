@@ -383,10 +383,35 @@ def main() -> None:
         "--once", action="store_true",
         help="Run once and exit",
     )
+    parser.add_argument(
+        "--model", type=str, default="",
+        help="LLM model name (default: gpt-4o-mini, or env OPENAI_MODEL)",
+    )
+    parser.add_argument(
+        "--base-url", type=str, default="",
+        help="LLM API base URL (default: env OPENAI_BASE_URL)",
+    )
+    parser.add_argument(
+        "--api-key", type=str, default="",
+        help="LLM API key (default: env OPENAI_API_KEY)",
+    )
     args = parser.parse_args()
 
     workspace = Path(args.workspace).resolve()
-    bee = CenturionBee(workspace=workspace, bee_name=args.name)
+
+    api_key = args.api_key or os.environ.get("OPENAI_API_KEY", "")
+    base_url = args.base_url or os.environ.get("OPENAI_BASE_URL", "")
+    model = args.model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    if api_key:
+        from src.base.llm_backend import OpenAICompatProvider
+        provider = OpenAICompatProvider(api_key=api_key, base_url=base_url or None, model=model)
+        print(f"[{args.name}] Using LLM: {model} @ {base_url or 'https://api.openai.com/v1'}")
+    else:
+        from src.base.llm_backend import MockLLMProvider
+        provider = MockLLMProvider(model=model)
+        print(f"[{args.name}] WARNING: No API key. Running with MOCK LLM.")
+
+    bee = CenturionBee(workspace=workspace, bee_name=args.name, provider=provider)
 
     if args.once:
         asyncio.run(bee.run_once())

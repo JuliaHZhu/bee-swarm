@@ -64,9 +64,9 @@ class WorkerBee:
         self.artifact_store = ArtifactStore(self.workspace)
         self.memory = BeeMemory(self.workspace, self.bee_name)
 
-        # 工具注册
+        # 工具注册（工作区为整个 workspace，产出物路径通过 prompt 约束）
         self.tools = ToolRegistry()
-        register_worker_tools(self.tools, self.workspace / "artifacts")
+        register_worker_tools(self.tools, self.workspace)
 
         # Agent loop
         self.agent_loop = SimpleAgentLoop(
@@ -231,10 +231,43 @@ def main() -> None:
         action="store_true",
         help="Run once and exit (process one task or exit if none)",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="",
+        help="LLM model name (default: gpt-4o-mini, or env OPENAI_MODEL)",
+    )
+    parser.add_argument(
+        "--base-url",
+        type=str,
+        default="",
+        help="LLM API base URL (default: env OPENAI_BASE_URL)",
+    )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default="",
+        help="LLM API key (default: env OPENAI_API_KEY)",
+    )
     args = parser.parse_args()
 
     workspace = Path(args.workspace).resolve()
-    bee = WorkerBee(workspace=workspace, bee_name=args.name)
+
+    # 构造 provider：有 key/model 则用真模型，否则 Mock（并警告）
+    api_key = args.api_key or os.environ.get("OPENAI_API_KEY", "")
+    base_url = args.base_url or os.environ.get("OPENAI_BASE_URL", "")
+    model = args.model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    if api_key:
+        from src.base.llm_backend import OpenAICompatProvider
+        provider = OpenAICompatProvider(api_key=api_key, base_url=base_url or None, model=model)
+        print(f"[{args.name}] Using LLM: {model} @ {base_url or 'https://api.openai.com/v1'}")
+    else:
+        from src.base.llm_backend import MockLLMProvider
+        provider = MockLLMProvider(model=model)
+        print(f"[{args.name}] WARNING: No API key provided. Running with MOCK LLM. "
+              f"Set --api-key or OPENAI_API_KEY for real model.")
+
+    bee = WorkerBee(workspace=workspace, bee_name=args.name, provider=provider)
 
     if args.once:
         asyncio.run(bee.run_once())

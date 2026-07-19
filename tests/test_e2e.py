@@ -396,7 +396,7 @@ class TestEndToEnd(unittest.IsolatedAsyncioTestCase):
             description="Write hello world to a file",
             tool="write_file",
             tool_params={
-                "path": "worker_direct_test/hello.txt",
+                "path": "artifacts/worker_direct_test/hello.txt",
                 "content": "Hello from Worker Bee!",
             },
         )
@@ -411,7 +411,7 @@ class TestEndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(done.status, TaskStatus.DONE)
         self.assertIsNotNone(done.result)
 
-        # 验证文件已写入
+        # 验证文件已写入 artifacts 目录
         artifact_file = self.workspace / "artifacts" / "worker_direct_test" / "hello.txt"
         self.assertTrue(artifact_file.exists())
         with open(artifact_file) as f:
@@ -446,6 +446,45 @@ class TestEndToEnd(unittest.IsolatedAsyncioTestCase):
         print("[E2E] Concurrent claim safety PASS")
 
 
+class TestConcurrentClaim(unittest.TestCase):
+    """真并发领取测试：多线程同时 claim 同一任务，断言只有 1 个成功。"""
+
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp())
+        self.store = TaskCardStore(self.tmpdir)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def test_true_concurrent_claim(self):
+        import threading
+
+        card = TaskCard(
+            task_id="concurrent_race",
+            type="worker",
+            title="Race test",
+        )
+        self.store.create(card)
+
+        results: list[TaskCard | None] = []
+        lock = threading.Lock()
+
+        def claim_worker(name: str) -> None:
+            result = self.store.claim("concurrent_race", name)
+            with lock:
+                results.append(result)
+
+        threads = [threading.Thread(target=claim_worker, args=(f"bee_{i}",)) for i in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        successes = [r for r in results if r is not None]
+        self.assertEqual(len(successes), 1, f"Expected 1 winner, got {len(successes)}")
+        print(f"[CONCURRENT] 20 threads claim, 1 winner: {successes[0].assigned_to}")
+
+
 def run_tests():
     """运行所有测试。"""
     loader = unittest.TestLoader()
@@ -456,6 +495,7 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestArtifactStore))
     suite.addTests(loader.loadTestsFromTestCase(TestGraphStore))
     suite.addTests(loader.loadTestsFromTestCase(TestEndToEnd))
+    suite.addTests(loader.loadTestsFromTestCase(TestConcurrentClaim))
 
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
