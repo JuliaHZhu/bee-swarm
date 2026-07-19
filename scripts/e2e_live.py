@@ -44,13 +44,21 @@ async def main() -> None:
     did = await centurion.run_once()
     print(f"[E2E] Centurion did_work={did}")
 
-    # 3. Worker executes (loop until no more pending worker tasks)
+    # 3. Worker executes (loop until no pending worker tasks or 50 iterations)
     worker = WorkerBee(workspace=workspace, provider=provider, bee_name="worker_e2e")
-    for i in range(10):
+    for i in range(50):
         did = await worker.run_once()
         print(f"[E2E] Worker iteration {i+1} did_work={did}")
         if not did:
-            break
+            # double-check: any pending worker tasks left?
+            store = TaskCardStore(workspace)
+            pending = store.list_pending()
+            worker_pending = [c for c in pending if c.type == "worker"]
+            if not worker_pending:
+                break
+            # If there are pending tasks but none claimed, maybe they are for a different agent
+            # Continue a few more iterations to let other agents pick them up (none here)
+            await asyncio.sleep(0.5)
 
     # 4. Inspect results
     store = TaskCardStore(workspace)

@@ -25,11 +25,15 @@ class WorkerProcess:
         agent_name: str,
         workspace: Path,
         python_executable: str,
+        repo_root: Path | None = None,
+        worker_name: str = "",
         extra_args: list[str] | None = None,
     ) -> None:
         self.agent_name = agent_name
         self.workspace = workspace
         self.python_executable = python_executable
+        self.repo_root = repo_root
+        self.worker_name = worker_name or agent_name
         self.extra_args = extra_args or []
         self.proc: subprocess.Popen[Any] | None = None
 
@@ -40,12 +44,17 @@ class WorkerProcess:
             "src.bees.worker_bee",
             "--workspace",
             str(self.workspace),
+            "--name",
+            self.worker_name,
             "--agent",
             self.agent_name,
             *self.extra_args,
         ]
-        self.proc = subprocess.Popen(cmd)
-        print(f"[Supervisor] Started {self.agent_name} (pid {self.proc.pid})")
+        kwargs: dict[str, Any] = {}
+        if self.repo_root:
+            kwargs["cwd"] = str(self.repo_root)
+        self.proc = subprocess.Popen(cmd, **kwargs)
+        print(f"[Supervisor] Started {self.worker_name} (agent={self.agent_name}, pid {self.proc.pid})")
 
     def is_alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
@@ -73,10 +82,12 @@ class SwarmSupervisor:
         workspace: Path,
         agent_names: list[str] | None = None,
         poll_interval: float = 5.0,
+        repo_root: Path | None = None,
         extra_args: list[str] | None = None,
     ) -> None:
         self.workspace = Path(workspace)
         self.poll_interval = poll_interval
+        self.repo_root = repo_root
         self.extra_args = extra_args or []
         self._shutdown = False
         self._reload = False
@@ -92,12 +103,14 @@ class SwarmSupervisor:
             raise RuntimeError("No agents to supervise. Provide --agents or ensure agents/ has YAML files.")
 
         self.workers: list[WorkerProcess] = []
-        for name in self.agent_names:
+        for idx, name in enumerate(self.agent_names):
             self.workers.append(
                 WorkerProcess(
                     agent_name=name,
                     workspace=self.workspace,
                     python_executable=sys.executable,
+                    repo_root=self.repo_root,
+                    worker_name=f"{name}_{idx+1:02d}",
                     extra_args=self.extra_args,
                 )
             )
@@ -117,12 +130,14 @@ class SwarmSupervisor:
 
         reg = AgentRegistry()
         self.agent_names = [a.name for a in reg.list_all()]
-        for name in self.agent_names:
+        for idx, name in enumerate(self.agent_names):
             self.workers.append(
                 WorkerProcess(
                     agent_name=name,
                     workspace=self.workspace,
                     python_executable=sys.executable,
+                    repo_root=self.repo_root,
+                    worker_name=f"{name}_{idx+1:02d}",
                     extra_args=self.extra_args,
                 )
             )
@@ -181,15 +196,41 @@ def main() -> None:
         "--once", action="store_true",
         help="Start workers and exit immediately (no monitoring)",
     )
+    parser.add_argument(
+        "--model", type=str, default="",
+        help="LLM model name forwarded to workers (default: env OPENAI_MODEL or gpt-4o-mini)",
+    )
+    parser.add_argument(
+        "--base-url", type=str, default="",
+        help="LLM API base URL forwarded to workers (default: env OPENAI_BASE_URL)",
+    )
+    parser.add_argument(
+        "--api-key", type=str, default="",
+        help="LLM API key forwarded to workers (default: env OPENAI_API_KEY)",
+    )
     args = parser.parse_args()
 
     workspace = Path(args.workspace).resolve()
     agent_names = [a.strip() for a in args.agents.split(",") if a.strip()] or None
 
+    # Auto-detect repo root so python -m src.bees.worker_bee works regardless of cwd
+    repo_root = Path(__file__).parent.parent.parent.resolve()
+
+    # Build LLM extra args to forward to every worker
+    extra_args: list[str] = []
+    if args.model:
+        extra_args += ["--model", args.model]
+    if args.base_url:
+        extra_args += ["--base-url", args.base_url]
+    if args.api_key:
+        extra_args += ["--api-key", args.api_key]
+
     supervisor = SwarmSupervisor(
         workspace=workspace,
         agent_names=agent_names,
         poll_interval=args.poll_interval,
+        repo_root=repo_root,
+        extra_args=extra_args,
     )
 
     if args.once:
